@@ -1,0 +1,53 @@
+name: Repository Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  repository_integrity:
+    name: Repository integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail on unresolved merge-conflict markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -n -E '^(<<<<<<< [^<].*|=======$|>>>>>>> [^>].*)' -- .; then
+            echo "Unresolved Git merge-conflict markers found."
+            exit 1
+          fi
+
+      - name: Fail on tracked sensitive filenames
+        shell: bash
+        run: |
+          set -euo pipefail
+          sensitive='(^|/)(\.env(\..*)?|key\.properties)$|\.(pem|key|p12|pfx|jks|keystore|kdbx)$'
+          hits="$(git ls-files | grep -Ei "$sensitive" | grep -Ev '(^|/)\.env\.example$' || true)"
+          if [ -n "$hits" ]; then
+            echo "Sensitive filenames are tracked:"
+            printf '%s\n' "$hits"
+            exit 1
+          fi
+
+      - name: Require immutable Action pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          bad="$(grep -RhoE 'uses:[[:space:]]+[^[:space:]#]+' .github/workflows --include='*.yml' --include='*.yaml' \
+            | awk '{print $2}' \
+            | grep -v '^\./' \
+            | grep -Ev '@[0-9a-fA-F]{40}$' || true)"
+          if [ -n "$bad" ]; then
+            echo "GitHub Actions must be pinned to immutable commit SHAs:"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
